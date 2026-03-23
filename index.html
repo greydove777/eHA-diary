@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#2a82aa" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="頭痛日記" />
+  <meta name="description" content="頭痛症狀記錄與追蹤工具" />
+  <link rel="manifest" href="manifest.json" />
+  <!-- Apple Touch Icon (SVG 轉換成內嵌 base64) -->
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <title>頭痛日記</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { background: #d2eaf8; overscroll-behavior: none; }
+    #root { min-height: 100vh; }
+    input[type=range] { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 3px; background: rgba(74,138,176,0.2); outline: none; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: #4a9abf; cursor: pointer; box-shadow: 0 2px 6px rgba(42,130,170,0.4); }
+    input, select, textarea { outline: none; }
+    select { -webkit-appearance: none; appearance: none; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(74,138,176,0.3); border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React + Babel (CDN) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // ── 資料 ──
+    const 疼痛部位 = ["前額","右側太陽穴","左側太陽穴","後腦勺","頭頂","眼睛後方","頸部／後枕","單側","整個頭"];
+    const 誘發因素 = ["壓力","睡眠問題","脫水","酒精","咖啡因","強光","噪音","使用螢幕","未進食","天氣變化","荷爾蒙","運動","強烈氣味","不明原因"];
+    const 症狀清單 = ["搏動感","壓迫感","刺痛","灼熱感","脈衝式跳動","緊箍感","噁心","嘔吐","畏光","畏聲","視覺先兆","頭暈","頸部僵硬"];
+    const 藥物清單 = ["未服藥","布洛芬","普拿疼／乙醯胺酚","阿斯匹靈","舒馬曲坦","利紮曲坦","萘普生","Excedrin","其他"];
+
+    const defaultEntry = () => ({
+      id: Date.now(),
+      date: new Date().toISOString().split("T")[0],
+      time: new Date().toTimeString().slice(0,5),
+      painLevel: 5, location: [], symptoms: [], dizziness: 0,
+      triggers: [], medication: "未服藥", medicationTime: "",
+      medicationRelief: null, duration: "", notes: "", mood: null, sleep: "",
+    });
+
+    const MOODS = [
+      { emoji: "😊", label: "良好" }, { emoji: "😐", label: "普通" },
+      { emoji: "😟", label: "低落" }, { emoji: "😣", label: "很差" },
+    ];
+
+    const STEPS = [
+      { title: "發生時間", icon: "🕐" }, { title: "疼痛程度", icon: "🔥" },
+      { title: "疼痛部位", icon: "📍" }, { title: "伴隨症狀", icon: "💫" },
+      { title: "頭暈程度", icon: "🌀" }, { title: "誘發因素", icon: "⚡" },
+      { title: "用藥紀錄", icon: "💊" }, { title: "整體狀態", icon: "💭" },
+    ];
+
+    const painColor = p => p <= 3 ? "#2a9a6a" : p <= 6 ? "#e09020" : "#d04040";
+    const painBg    = p => p <= 3 ? "#e8f8f0" : p <= 6 ? "#fef5e0" : "#fde8e8";
+    const painLabel = p => p <= 2 ? "輕微" : p <= 4 ? "中等" : p <= 6 ? "明顯" : p <= 8 ? "嚴重" : "極度劇烈";
+    const dizLabel  = d => d === 0 ? "無" : d <= 3 ? "輕微" : d <= 6 ? "中等" : d <= 8 ? "嚴重" : "極度／無法行走";
+
+    // ── 主元件 ──
+    function HeadacheDiary() {
+      const [view, setView] = useState("home");
+      const [entries, setEntries] = useState([]);
+      const [current, setCurrent] = useState(defaultEntry());
+      const [step, setStep] = useState(0);
+      const [selectedEntry, setSelectedEntry] = useState(null);
+      const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0,7));
+
+      useEffect(() => {
+        try {
+          const saved = localStorage.getItem("headache-diary-tw");
+          if (saved) setEntries(JSON.parse(saved));
+        } catch {}
+      }, []);
+
+      const saveEntries = useCallback((updated) => {
+        setEntries(updated);
+        try { localStorage.setItem("headache-diary-tw", JSON.stringify(updated)); } catch {}
+      }, []);
+
+      const submitEntry = () => { saveEntries([current, ...entries]); setView("home"); setCurrent(defaultEntry()); setStep(0); };
+      const deleteEntry = id => { saveEntries(entries.filter(e => e.id !== id)); setView("history"); setSelectedEntry(null); };
+      const toggleArr = (arr, val) => arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val];
+
+      const filteredEntries = entries.filter(e => e.date.startsWith(filterMonth));
+      const avgPain = filteredEntries.length ? (filteredEntries.reduce((s,e) => s+e.painLevel,0)/filteredEntries.length).toFixed(1) : "–";
+      const maxPain = filteredEntries.length ? Math.max(...filteredEntries.map(e=>e.painLevel)) : "–";
+
+      const C = {
+        bg:"linear-gradient(160deg,#e8f5fb 0%,#d2eaf8 50%,#bcdff5 100%)",
+        card:"rgba(255,255,255,0.78)", cardBorder:"rgba(74,154,191,0.18)",
+        primary:"#2a82aa", primaryLight:"#4a9abf",
+        text:"#1a3a52", textMid:"#4a7a9a", textLight:"#7aaac8",
+        pillActive:"rgba(74,154,191,0.18)", pillActiveBorder:"#4a9abf",
+        pillActiveText:"#1a5a7a", pillText:"#5a8aaa",
+        pillBorder:"rgba(74,138,176,0.25)", pillBg:"rgba(255,255,255,0.7)",
+      };
+      const FF = "'Microsoft JhengHei','Noto Sans TC','PingFang TC',sans-serif";
+      const S = {
+        root:{ minHeight:"100vh", background:C.bg, color:C.text, fontFamily:FF, display:"flex", flexDirection:"column", alignItems:"center" },
+        header:{ width:"100%", maxWidth:480, padding:"20px 24px 0", display:"flex", alignItems:"center", justifyContent:"space-between" },
+        logo:{ fontSize:13, letterSpacing:"0.1em", color:C.primary, fontFamily:FF },
+        navBtn: a=>({ background:a?"rgba(74,154,191,0.14)":"transparent", border:"none", color:a?C.primary:C.textLight, fontSize:13, padding:"6px 12px", cursor:"pointer", borderRadius:4, fontFamily:FF }),
+        main:{ width:"100%", maxWidth:480, padding:"24px", flex:1 },
+        card:{ background:C.card, border:`1px solid ${C.cardBorder}`, borderRadius:16, padding:24, marginBottom:16, boxShadow:"0 2px 14px rgba(74,154,191,0.09)" },
+        bigBtn:{ width:"100%", padding:"18px", background:`linear-gradient(135deg,${C.primaryLight} 0%,${C.primary} 100%)`, border:"none", borderRadius:12, color:"#fff", fontSize:16, fontFamily:FF, cursor:"pointer", marginBottom:12, boxShadow:"0 4px 16px rgba(42,130,170,0.28)" },
+        pill: a=>({ display:"inline-block", padding:"7px 15px", margin:"4px", borderRadius:20, border:`1px solid ${a?C.pillActiveBorder:C.pillBorder}`, background:a?C.pillActive:C.pillBg, color:a?C.pillActiveText:C.pillText, fontSize:14, cursor:"pointer", fontFamily:FF }),
+        stepTitle:{ fontSize:20, color:"#1a4a6a", margin:0, fontWeight:"bold", fontFamily:FF },
+        label:{ fontSize:11, letterSpacing:"0.08em", color:C.textLight, marginBottom:8, display:"block", fontFamily:FF },
+        input:{ width:"100%", background:"rgba(255,255,255,0.85)", border:"1px solid rgba(74,138,176,0.3)", borderRadius:8, color:C.text, padding:"11px 14px", fontSize:15, fontFamily:FF, boxSizing:"border-box" },
+        textarea:{ width:"100%", background:"rgba(255,255,255,0.85)", border:"1px solid rgba(74,138,176,0.3)", borderRadius:8, color:C.text, padding:"11px 14px", fontSize:15, fontFamily:FF, resize:"vertical", minHeight:80, boxSizing:"border-box" },
+        nextBtn:{ background:`linear-gradient(135deg,${C.primaryLight} 0%,${C.primary} 100%)`, border:"none", borderRadius:10, color:"#fff", padding:"13px 28px", fontSize:15, fontFamily:FF, cursor:"pointer", boxShadow:"0 3px 12px rgba(42,130,170,0.22)" },
+        backBtn:{ background:"rgba(255,255,255,0.7)", border:"1px solid rgba(74,138,176,0.25)", borderRadius:10, color:C.textMid, padding:"13px 20px", fontSize:15, fontFamily:FF, cursor:"pointer" },
+        statBox:{ background:"rgba(255,255,255,0.65)", border:`1px solid ${C.cardBorder}`, borderRadius:12, padding:"16px 12px", flex:1, textAlign:"center" },
+        entryRow:{ display:"flex", alignItems:"center", gap:14, padding:"14px 0", cursor:"pointer" },
+        painBadge: p=>({ width:44, height:44, borderRadius:"50%", background:painBg(p), border:`2px solid ${painColor(p)}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:"bold", color:painColor(p), flexShrink:0 }),
+      };
+
+      // 首頁
+      const HomeView = () => (
+        <div>
+          <div style={{textAlign:"center",padding:"32px 0 28px"}}>
+            <div style={{fontSize:52,marginBottom:8}}>🧠</div>
+            <h1 style={{fontSize:24,fontWeight:"bold",color:"#1a4a6a",margin:0,fontFamily:FF}}>頭痛日記</h1>
+            <p style={{color:C.textLight,fontSize:13,marginTop:6}}>記錄・了解・管理</p>
+          </div>
+          <button style={S.bigBtn} onClick={()=>{setCurrent(defaultEntry());setStep(0);setView("log");}}>
+            ＋ 新增頭痛紀錄
+          </button>
+          {entries.length > 0 && (
+            <div style={S.card}>
+              <span style={S.label}>最近紀錄</span>
+              {entries.slice(0,3).map((e,i)=>(
+                <div key={e.id} style={{...S.entryRow, borderBottom: i<Math.min(entries.length,3)-1?"1px solid rgba(74,138,176,0.1)":"none"}}
+                  onClick={()=>{setSelectedEntry(e);setView("detail");}}>
+                  <div style={S.painBadge(e.painLevel)}>{e.painLevel}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,color:C.text}}>{e.date} · {e.time}</div>
+                    <div style={{fontSize:12,color:C.textLight,marginTop:2}}>
+                      {e.location.slice(0,2).join("、")||"未指定部位"}
+                      {e.duration?` · ${e.duration}`:""}
+                    </div>
+                  </div>
+                  <div style={{fontSize:16,color:C.textLight}}>›</div>
+                </div>
+              ))}
+              {entries.length > 3 && (
+                <div style={{textAlign:"center",marginTop:8}}>
+                  <button style={{...S.backBtn,padding:"6px 16px",fontSize:12}} onClick={()=>setView("history")}>
+                    查看全部 {entries.length} 筆紀錄
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {entries.length === 0 && (
+            <div style={{...S.card,textAlign:"center",padding:32}}>
+              <div style={{fontSize:32,marginBottom:12}}>📓</div>
+              <p style={{color:C.textLight,fontSize:13,margin:0}}>尚無紀錄。新增第一筆頭痛紀錄，開始追蹤規律。</p>
+            </div>
+          )}
+        </div>
+      );
+
+      // 記錄步驟
+      const LogView = () => {
+        const s = STEPS[step];
+        return (
+          <div>
+            <div style={{display:"flex",gap:4,marginBottom:28}}>
+              {STEPS.map((_,i)=>(
+                <div key={i} style={{flex:1,height:3,borderRadius:2,background:i<=step?C.primaryLight:"rgba(74,138,176,0.15)",transition:"background 0.3s"}}/>
+              ))}
+            </div>
+            <div style={{marginBottom:24,display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:26}}>{s.icon}</span>
+              <h2 style={S.stepTitle}>{s.title}</h2>
+            </div>
+
+            {step===0&&(
+              <div style={S.card}>
+                <div style={{marginBottom:16}}>
+                  <label style={S.label}>日期</label>
+                  <input type="date" style={S.input} value={current.date} onChange={e=>setCurrent({...current,date:e.target.value})}/>
+                </div>
+                <div style={{marginBottom:16}}>
+                  <label style={S.label}>開始時間</label>
+                  <input type="time" style={S.input} value={current.time} onChange={e=>setCurrent({...current,time:e.target.value})}/>
+                </div>
+                <div>
+                  <label style={S.label}>持續時間（例：3小時、2天）</label>
+                  <input type="text" style={S.input} value={current.duration} placeholder="選填" onChange={e=>setCurrent({...current,duration:e.target.value})}/>
+                </div>
+              </div>
+            )}
+
+            {step===1&&(
+              <div style={S.card}>
+                <div style={{textAlign:"center",marginBottom:24}}>
+                  <div style={{fontSize:64,fontWeight:"bold",color:painColor(current.painLevel),lineHeight:1,transition:"color 0.2s"}}>{current.painLevel}</div>
+                  <div style={{fontSize:14,color:C.textMid,marginTop:6}}>{painLabel(current.painLevel)}</div>
+                </div>
+                <input type="range" min={0} max={10} value={current.painLevel}
+                  onChange={e=>setCurrent({...current,painLevel:parseInt(e.target.value)})}
+                  style={{width:"100%",accentColor:painColor(current.painLevel)}}/>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
+                  <span style={{fontSize:11,color:"#2a9a6a"}}>完全不痛</span>
+                  <span style={{fontSize:11,color:"#d04040"}}>難以忍受</span>
+                </div>
+              </div>
+            )}
+
+            {step===2&&(
+              <div style={S.card}>
+                <label style={S.label}>可複選</label>
+                <div>{疼痛部位.map(l=><button key={l} style={S.pill(current.location.includes(l))} onClick={()=>setCurrent({...current,location:toggleArr(current.location,l)})}>{l}</button>)}</div>
+              </div>
+            )}
+
+            {step===3&&(
+              <div style={S.card}>
+                <label style={S.label}>可複選</label>
+                <div>{症狀清單.map(s=><button key={s} style={S.pill(current.symptoms.includes(s))} onClick={()=>setCurrent({...current,symptoms:toggleArr(current.symptoms,s)})}>{s}</button>)}</div>
+              </div>
+            )}
+
+            {step===4&&(
+              <div style={S.card}>
+                <label style={S.label}>頭暈嚴重程度</label>
+                <div style={{textAlign:"center",marginBottom:20}}>
+                  <div style={{fontSize:56,fontWeight:"bold",color:current.dizziness===0?C.textLight:`hsl(${200-current.dizziness*18},70%,45%)`,lineHeight:1,transition:"color 0.2s"}}>{current.dizziness}</div>
+                  <div style={{fontSize:14,color:C.textMid,marginTop:6}}>{dizLabel(current.dizziness)}</div>
+                </div>
+                <input type="range" min={0} max={10} value={current.dizziness}
+                  onChange={e=>setCurrent({...current,dizziness:parseInt(e.target.value)})}
+                  style={{width:"100%",accentColor:`hsl(${200-current.dizziness*18},70%,45%)`}}/>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
+                  <span style={{fontSize:11,color:C.textLight}}>無頭暈</span>
+                  <span style={{fontSize:11,color:"#c07030"}}>極度頭暈</span>
+                </div>
+              </div>
+            )}
+
+            {step===5&&(
+              <div style={S.card}>
+                <label style={S.label}>可複選</label>
+                <div>{誘發因素.map(t=><button key={t} style={S.pill(current.triggers.includes(t))} onClick={()=>setCurrent({...current,triggers:toggleArr(current.triggers,t)})}>{t}</button>)}</div>
+              </div>
+            )}
+
+            {step===6&&(
+              <div style={S.card}>
+                <div style={{marginBottom:16}}>
+                  <label style={S.label}>服用藥物</label>
+                  <select style={S.input} value={current.medication} onChange={e=>setCurrent({...current,medication:e.target.value})}>
+                    {藥物清單.map(m=><option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                {current.medication!=="未服藥"&&(
+                  <>
+                    <div style={{marginBottom:16}}>
+                      <label style={S.label}>服藥時間</label>
+                      <input type="time" style={S.input} value={current.medicationTime} onChange={e=>setCurrent({...current,medicationTime:e.target.value})}/>
+                    </div>
+                    <div>
+                      <label style={S.label}>是否有效？</label>
+                      <div style={{display:"flex",gap:8}}>
+                        {["有效","部分有效","無效"].map(r=>(
+                          <button key={r} style={{...S.pill(current.medicationRelief===r),flex:1,textAlign:"center"}} onClick={()=>setCurrent({...current,medicationRelief:r})}>{r}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {step===7&&(
+              <div style={S.card}>
+                <div style={{marginBottom:16}}>
+                  <label style={S.label}>頭痛前的情緒</label>
+                  <div style={{display:"flex",gap:10}}>
+                    {MOODS.map(m=>(
+                      <button key={m.label} onClick={()=>setCurrent({...current,mood:m.label})}
+                        style={{flex:1,padding:"12px 8px",textAlign:"center",background:current.mood===m.label?C.pillActive:"rgba(255,255,255,0.7)",border:`1px solid ${current.mood===m.label?C.pillActiveBorder:C.pillBorder}`,borderRadius:10,cursor:"pointer",fontSize:22,display:"block",fontFamily:FF}}>
+                        <div>{m.emoji}</div>
+                        <div style={{fontSize:11,color:C.textLight,marginTop:4}}>{m.label}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{marginBottom:16}}>
+                  <label style={S.label}>前一晚睡眠時數</label>
+                  <input type="number" min="0" max="24" step="0.5" style={S.input} value={current.sleep} placeholder="例：7" onChange={e=>setCurrent({...current,sleep:e.target.value})}/>
+                </div>
+                <div>
+                  <label style={S.label}>備註</label>
+                  <textarea style={S.textarea} value={current.notes} placeholder="其他補充觀察…" onChange={e=>setCurrent({...current,notes:e.target.value})}/>
+                </div>
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:10,marginTop:8}}>
+              <button style={S.backBtn} onClick={()=>step===0?setView("home"):setStep(step-1)}>
+                {step===0?"取消":"上一步"}
+              </button>
+              {step<STEPS.length-1
+                ?<button style={{...S.nextBtn,flex:1}} onClick={()=>setStep(step+1)}>繼續 →</button>
+                :<button style={{...S.nextBtn,flex:1,background:"linear-gradient(135deg,#3aaa7a 0%,#2a8a5a 100%)"}} onClick={submitEntry}>儲存紀錄 ✓</button>
+              }
+            </div>
+          </div>
+        );
+      };
+
+      // 歷史紀錄
+      const HistoryView = () => (
+        <div>
+          <h2 style={{...S.stepTitle,marginBottom:20}}>歷史紀錄</h2>
+          <div style={{marginBottom:16}}>
+            <input type="month" style={{...S.input,width:"auto"}} value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
+          </div>
+          {filteredEntries.length===0?(
+            <div style={{...S.card,textAlign:"center",padding:32}}>
+              <p style={{color:C.textLight,margin:0}}>本月尚無紀錄。</p>
+            </div>
+          ):(
+            <div style={S.card}>
+              {filteredEntries.map((e,i)=>(
+                <div key={e.id} style={{...S.entryRow,borderBottom:i<filteredEntries.length-1?"1px solid rgba(74,138,176,0.1)":"none"}}
+                  onClick={()=>{setSelectedEntry(e);setView("detail");}}>
+                  <div style={S.painBadge(e.painLevel)}>{e.painLevel}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,color:C.text}}>{e.date} · {e.time}</div>
+                    <div style={{fontSize:12,color:C.textLight,marginTop:2}}>
+                      {e.symptoms.slice(0,2).join("、")||e.location.slice(0,2).join("、")||"–"}
+                      {e.dizziness>0?` · 🌀 ${e.dizziness}`:""}
+                      {e.duration?` · ${e.duration}`:""}
+                    </div>
+                  </div>
+                  <span style={{fontSize:18}}>{MOODS.find(m=>m.label===e.mood)?.emoji||""}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+
+      // 統計分析
+      const StatsView = () => {
+        const triggerCount={};
+        filteredEntries.forEach(e=>e.triggers.forEach(t=>triggerCount[t]=(triggerCount[t]||0)+1));
+        const sortedTriggers=Object.entries(triggerCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
+        const maxTCount=sortedTriggers[0]?.[1]||1;
+        const symptomCount={};
+        filteredEntries.forEach(e=>e.symptoms.forEach(s=>symptomCount[s]=(symptomCount[s]||0)+1));
+        const sortedSymptoms=Object.entries(symptomCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
+        return (
+          <div>
+            <h2 style={{...S.stepTitle,marginBottom:20}}>統計分析</h2>
+            <div style={{marginBottom:16}}>
+              <input type="month" style={{...S.input,width:"auto"}} value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
+            </div>
+            <div style={{display:"flex",gap:10,marginBottom:16}}>
+              {[
+                {val:avgPain,col:painColor(parseFloat(avgPain)||0),lbl:"平均疼痛"},
+                {val:filteredEntries.length,col:C.primaryLight,lbl:"發作次數"},
+                {val:maxPain,col:painColor(maxPain||0),lbl:"最高疼痛"},
+              ].map(({val,col,lbl})=>(
+                <div key={lbl} style={S.statBox}>
+                  <div style={{fontSize:26,fontWeight:"bold",color:col}}>{val}</div>
+                  <div style={{fontSize:10,color:C.textLight,marginTop:4}}>{lbl}</div>
+                </div>
+              ))}
+            </div>
+            {sortedTriggers.length>0&&(
+              <div style={{...S.card,marginBottom:16}}>
+                <span style={S.label}>主要誘發因素</span>
+                {sortedTriggers.map(([t,c])=>(
+                  <div key={t} style={{marginBottom:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:13,color:C.text}}>{t}</span>
+                      <span style={{fontSize:12,color:C.textLight}}>{c} 次</span>
+                    </div>
+                    <div style={{height:4,background:"rgba(74,138,176,0.12)",borderRadius:2}}>
+                      <div style={{height:"100%",width:`${(c/maxTCount)*100}%`,background:C.primaryLight,borderRadius:2}}/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {sortedSymptoms.length>0&&(
+              <div style={S.card}>
+                <span style={S.label}>常見症狀</span>
+                <div>{sortedSymptoms.map(([s,c])=><span key={s} style={{...S.pill(true),fontSize:12}}>{s}（{c}次）</span>)}</div>
+              </div>
+            )}
+            {filteredEntries.length===0&&(
+              <div style={{...S.card,textAlign:"center",padding:32}}>
+                <p style={{color:C.textLight,margin:0}}>新增紀錄後即可查看統計分析。</p>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      // 詳細紀錄
+      const DetailView = ({entry}) => (
+        <div>
+          <button style={{...S.backBtn,marginBottom:20}} onClick={()=>setView("history")}>← 返回</button>
+          <div style={{...S.card,borderColor:`${painColor(entry.painLevel)}44`}}>
+            <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:20}}>
+              <div style={{...S.painBadge(entry.painLevel),width:56,height:56,fontSize:20}}>{entry.painLevel}</div>
+              <div>
+                <div style={{fontSize:16,color:C.text}}>{entry.date}</div>
+                <div style={{fontSize:13,color:C.textLight}}>{entry.time}{entry.duration?` · ${entry.duration}`:""}</div>
+              </div>
+              {entry.mood&&<div style={{marginLeft:"auto",fontSize:28}}>{MOODS.find(m=>m.label===entry.mood)?.emoji}</div>}
+            </div>
+            {[
+              {label:"疼痛部位",val:entry.location.join("、")},
+              {label:"伴隨症狀",val:entry.symptoms.join("、")},
+              {label:"頭暈程度",val:entry.dizziness>0?`${entry.dizziness}/10 ─ ${dizLabel(entry.dizziness)}`:null},
+              {label:"誘發因素",val:entry.triggers.join("、")},
+              {label:"用藥",val:entry.medication!=="未服藥"?`${entry.medication}${entry.medicationTime?"（"+entry.medicationTime+"）":""}${entry.medicationRelief?" ─ "+entry.medicationRelief:""}`:null},
+              {label:"睡眠時數",val:entry.sleep?`${entry.sleep} 小時`:null},
+              {label:"備註",val:entry.notes},
+            ].filter(r=>r.val).map(row=>(
+              <div key={row.label} style={{marginBottom:14}}>
+                <span style={S.label}>{row.label}</span>
+                <div style={{fontSize:14,color:C.text}}>{row.val}</div>
+              </div>
+            ))}
+          </div>
+          <button onClick={()=>deleteEntry(entry.id)} style={{...S.backBtn,width:"100%",color:"#c05050",borderColor:"rgba(192,80,80,0.25)",marginTop:8}}>
+            刪除此筆紀錄
+          </button>
+        </div>
+      );
+
+      return (
+        <div style={S.root}>
+          <div style={S.header}>
+            <span style={S.logo}>🧠 頭痛日記</span>
+            <div style={{display:"flex",gap:4}}>
+              {[["home","首頁"],["history","紀錄"],["stats","統計"]].map(([v,l])=>(
+                <button key={v} style={S.navBtn(view===v||(view==="detail"&&v==="history"))} onClick={()=>setView(v)}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div style={S.main}>
+            {view==="home"&&<HomeView/>}
+            {view==="log"&&<LogView/>}
+            {view==="history"&&<HistoryView/>}
+            {view==="stats"&&<StatsView/>}
+            {view==="detail"&&selectedEntry&&<DetailView entry={selectedEntry}/>}
+          </div>
+          <div style={{padding:"16px 24px",fontSize:11,color:C.textLight,textAlign:"center"}}>
+            僅供個人記錄使用，非醫療建議
+          </div>
+        </div>
+      );
+    }
+
+    // 掛載
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<HeadacheDiary/>);
+
+    // 註冊 Service Worker
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch(()=>{});
+      });
+    }
+  </script>
+</body>
+</html>
